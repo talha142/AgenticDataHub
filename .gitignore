@@ -1,0 +1,32 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables (sensitive)
+dataset_agent/.env
+
+# Model cache
+dataset_agent/models/
+
+# Logs
+*.log
+
+# Output / generated data
+dataset_agent/output/
+dataset_agent/data/
+
+# Feedback runtime files
+dataset_agent/feedback/
+
+# Logging state runtime files
+dataset_agent/loggingstate/
+
+# Parser result (runtime output)
+dataset_agent/parser_res.md
