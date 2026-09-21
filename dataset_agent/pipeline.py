@@ -3,16 +3,24 @@ pipeline.py
 ───────────
 Assembles and compiles the full LangGraph state machine.
 
-Graph topology:
-  START
-    └─► dataset_node
-          └─► orchestrator_node
-                ├─► downloader_node  ──┐
-                └─► parser_node      ──┤
-                                       └─► summary_node ──► END
+Graph topology (matches build_graph below):
 
-Downloader and parser run in parallel when both are needed.
-If only one path has work, the other is skipped gracefully.
+  START ─► scraper_node ─► dataset_node ◄──► dataset_tools
+                               │ (scraping complete)
+                               ▼
+                        dataset_feedback ──(retry)──► dataset_node
+                               │
+                               ▼
+                        orchestrator_node ─► orchestrator_feedback
+                                                 ├─► downloader_node ◄──► downloader_tools
+                                                 └─► parser_node     ◄──► RAG_node
+
+  downloader_node ─► downloader_feedback ──(retry)──► downloader_node
+  parser_node     ─► parser_feedback     ──(retry)──► parser_node
+  downloader_feedback / parser_feedback ──(done)──► summary_node ─► END
+
+Routing between nodes is driven by the `current_phase` field of PipelineState;
+see the routing functions in this file.
 """
 
 from __future__ import annotations
