@@ -1,3 +1,15 @@
+<p align="center">
+  <img src="docs/banner.svg" alt="AgenticDataHub: multi-agent dataset discovery, download and parsing on LangGraph" width="100%">
+</p>
+
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3776AB?logo=python&logoColor=white">
+  <img alt="LangGraph" src="https://img.shields.io/badge/LangGraph-multi--agent-1f6feb">
+  <img alt="LangChain" src="https://img.shields.io/badge/LangChain-2ea44f">
+  <img alt="Playwright" src="https://img.shields.io/badge/Playwright-45ba4b?logo=playwright&logoColor=white">
+  <img alt="vLLM" src="https://img.shields.io/badge/vLLM-OpenAI--compatible-8957e5">
+</p>
+
 # AgenticDataHub
 
 **A LangGraph multi-agent system that discovers datasets on a website, then downloads them or extracts them from web pages using LLM-generated parsers — and writes a Markdown report of what it collected.**
@@ -24,34 +36,91 @@ You give it a seed URL and a research topic. The agents crawl the site, decide w
 
 ## Architecture
 
-The diagram below follows the edges defined in `dataset_agent/pipeline.py`.
+The diagram follows the edges defined in `dataset_agent/pipeline.py`. Blue nodes are LLM agents, grey nodes are tool executors, amber nodes are feedback/retry checks.
 
 ```mermaid
 flowchart TD
-    START([START]) --> scraper["scraper_node<br/>crawl seed URL (depth / page limits)"]
-    scraper --> dataset["dataset_node<br/>ReAct agent: find datasets"]
+    START([START]) --> scraper
 
-    dataset <-->|"tool calls"| dtools["dataset_tools<br/>fetch_page, extract_tables,<br/>add_dataset, ..."]
-    dataset -->|"scraping complete"| dfb["dataset_feedback"]
-    dfb -->|"needs retry"| dataset
-    dfb -->|"ok"| orch["orchestrator_node<br/>filter + split: download / parse"]
+    subgraph S1["1 · Discovery"]
+        scraper["scraper_node<br/>crawl seed URL"]
+        dataset["dataset_node<br/>find datasets"]
+        dtools["dataset_tools"]
+        dfb{{"dataset_feedback"}}
+        scraper --> dataset
+        dataset <-->|"tool calls"| dtools
+        dataset -->|"scraping complete"| dfb
+        dfb -->|"retry"| dataset
+    end
 
-    orch --> ofb["orchestrator_feedback"]
-    ofb --> down["downloader_node<br/>ReAct agent: download files"]
-    ofb --> parse["parser_node<br/>write + run extraction code"]
+    dfb -->|"ok"| orch
 
-    down <-->|"tool calls"| dltools["downloader_tools<br/>inspect_downloadable,<br/>download_file"]
-    down -->|"download complete"| downfb["downloader_feedback"]
-    downfb -->|"datasets to retry"| down
+    subgraph S2["2 · Orchestration"]
+        orch["orchestrator_node<br/>relevance filter, split download / parse"]
+        ofb{{"orchestrator_feedback"}}
+        orch --> ofb
+    end
+
+    ofb --> down
+    ofb --> parse
+
+    subgraph S3["3a · Download path"]
+        down["downloader_node<br/>verify URL, download"]
+        dltools["downloader_tools"]
+        downfb{{"downloader_feedback"}}
+        down <-->|"tool calls"| dltools
+        down -->|"download complete"| downfb
+        downfb -->|"datasets to retry"| down
+    end
+
+    subgraph S4["3b · Parse path"]
+        parse["parser_node<br/>generate + run extraction code"]
+        rag["RAG_node<br/>reusable extract_data()"]
+        parsefb{{"parser_feedback"}}
+        parse -->|"needs help"| rag
+        rag --> parse
+        parse -->|"parsing complete"| parsefb
+        parsefb -->|"should retry"| parse
+    end
+
     downfb -->|"done"| summary
-
-    parse -->|"needs help"| rag["RAG_node<br/>generate extract_data() with<br/>retrieved examples"]
-    rag --> parse
-    parse -->|"parsing complete"| parsefb["parser_feedback"]
-    parsefb -->|"should retry"| parse
     parsefb -->|"done"| summary
 
-    summary["summary_node<br/>Markdown report"] --> END([END])
+    subgraph S5["4 · Reporting"]
+        summary["summary_node<br/>Markdown report"]
+    end
+
+    summary --> END([END])
+
+    classDef agent fill:#1f6feb,stroke:#0b3d91,color:#ffffff;
+    classDef tool fill:#57606a,stroke:#32383f,color:#ffffff;
+    classDef feedback fill:#bf8700,stroke:#7d4e00,color:#ffffff;
+    classDef code fill:#2da44e,stroke:#116329,color:#ffffff;
+    class dataset,orch,down,parse,rag,summary agent;
+    class dtools,dltools tool;
+    class dfb,ofb,downfb,parsefb feedback;
+    class scraper code;
+```
+
+### How the parser learns from earlier pages
+
+When the parser cannot extract a page on its own, it hands off to `RAG_node`, which reuses what worked before:
+
+```mermaid
+flowchart LR
+    A["parser_node<br/>needs help"] --> B["Retrieve top-3 similar<br/>past extractors<br/>(vector store)"]
+    B --> C["LLM writes<br/>extract_data(html)"]
+    C --> D["Run the generated code"]
+    D --> E{"Returns data?"}
+    E -->|"yes"| F["Save code + schema<br/>to vector store"]
+    E -->|"no, attempts left"| C
+    E -->|"no, 3rd failure"| G["Return to parser_node"]
+    F --> G
+
+    classDef agent fill:#1f6feb,stroke:#0b3d91,color:#ffffff;
+    classDef store fill:#8957e5,stroke:#512a97,color:#ffffff;
+    class A,C agent;
+    class B,F store;
 ```
 
 ### What each node does
